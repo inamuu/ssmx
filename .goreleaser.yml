@@ -21,6 +21,7 @@ release:
   github:
     owner: inamuu
     name: ssmx
+  replace_existing_artifacts: true
 
 brews:
   - repository:
