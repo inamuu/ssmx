@@ -10,7 +10,7 @@ AWS の `session-manager-plugin` は WebSocket の keepalive 間隔が **5分に
 
 ## Features
 
-- WebSocket keepalive 間隔のカスタマイズ（デフォルト: 30秒）
+- WebSocket keepalive 間隔のカスタマイズ（デフォルト: 15秒）
 - fzf ライクなインタラクティブインスタンス選択
 - `session-manager-plugin` 不要
 
@@ -56,7 +56,7 @@ ssmx -t i-0123456789abcdef0
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--profile` | `-p` | AWS プロファイル | `AWS_PROFILE` or `default` |
-| `--keepalive` | `-k` | Keepalive 間隔（秒） | `30` |
+| `--keepalive` | `-k` | Keepalive 間隔（秒） | `15` |
 | `--region` | `-r` | AWS リージョン | AWS config に従う |
 | `--target` | `-t` | インスタンスID（直接指定） | - |
 

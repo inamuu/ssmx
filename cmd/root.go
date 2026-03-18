@@ -27,7 +27,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&profile, "profile", "p", "", "AWS profile to use (default: AWS_PROFILE or \"default\")")
 	rootCmd.Flags().StringVarP(&region, "region", "r", "", "AWS region")
 	rootCmd.Flags().StringVarP(&target, "target", "t", "", "Instance ID (skip interactive selection)")
-	rootCmd.Flags().IntVarP(&keepalive, "keepalive", "k", 30, "WebSocket keepalive interval in seconds")
+	rootCmd.Flags().IntVarP(&keepalive, "keepalive", "k", 15, "WebSocket keepalive interval in seconds")
 	rootCmd.Version = version
 }
 
