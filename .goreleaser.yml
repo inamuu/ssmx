@@ -27,5 +27,6 @@ brews:
   - repository:
       owner: inamuu
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/inamuu/ssmx
     description: AWS SSM Session Manager CLI with configurable keepalive
