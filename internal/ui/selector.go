@@ -12,7 +12,7 @@ func SelectInstance(instances []internalaws.Instance) (*internalaws.Instance, er
 		instances,
 		func(i int) string {
 			inst := instances[i]
-			return fmt.Sprintf("%s\t%s\t%s", inst.InstanceID, inst.PrivateIP, inst.Name)
+			return fmt.Sprintf("%-22s  %-16s  %s", inst.InstanceID, inst.PrivateIP, inst.Name)
 		},
 		fuzzyfinder.WithPreviewWindow(func(i, w, h int) string {
 			if i == -1 {
