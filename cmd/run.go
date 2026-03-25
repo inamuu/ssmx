@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func run(cmd *cobra.Command, args []string) error {
+func runSession(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

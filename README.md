@@ -13,6 +13,8 @@ AWS の `session-manager-plugin` は WebSocket の keepalive 間隔が **5分に
 - WebSocket keepalive 間隔のカスタマイズ（デフォルト: 15秒）
 - fzf ライクなインタラクティブインスタンス選択
 - `session-manager-plugin` 不要
+- SSM Run Command によるインラインコマンド実行
+- ローカルスクリプトを転送してリモート実行
 
 ## Install
 
@@ -49,6 +51,12 @@ ssmx -r ap-northeast-1
 
 # インスタンスIDを直接指定（選択UIをスキップ）
 ssmx -t i-0123456789abcdef0
+
+# SSM Run Command でコマンド実行
+ssmx run --command 'uname -a'
+
+# ローカルスクリプトを転送して実行
+ssmx run --script ./scripts/deploy.sh -- --dry-run
 ```
 
 ## Flags
@@ -59,6 +67,19 @@ ssmx -t i-0123456789abcdef0
 | `--keepalive` | `-k` | Keepalive 間隔（秒） | `15` |
 | `--region` | `-r` | AWS リージョン | AWS config に従う |
 | `--target` | `-t` | インスタンスID（直接指定） | - |
+
+## `run` サブコマンド
+
+`ssmx run` は、SSM 管理下かつ Online な EC2 に対して AWS Run Command を実行します。
+`--target` を省略すると、対象インスタンスをインタラクティブに選択します。
+
+```bash
+ssmx run --command 'hostname'
+ssmx run --target i-0123456789abcdef0 --command 'ls -la /tmp/'
+ssmx run --script ./scripts/deploy.sh -- --dry-run
+```
+
+`--command` にローカル実在ファイルを渡した場合は、`ssm-local-script` と同様にローカルスクリプトとして扱います。
 
 ## License
 
