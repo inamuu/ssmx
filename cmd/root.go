@@ -14,6 +14,7 @@ var (
 	region    string
 	keepalive int
 	target    string
+	command   string
 )
 
 var rootCmd = &cobra.Command{
@@ -27,6 +28,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&profile, "profile", "p", "", "AWS profile to use (default: AWS_PROFILE or \"default\")")
 	rootCmd.PersistentFlags().StringVarP(&region, "region", "r", "", "AWS region")
 	rootCmd.Flags().StringVarP(&target, "target", "t", "", "Instance ID (skip interactive selection)")
+	rootCmd.Flags().StringVarP(&command, "command", "c", "", "Command to start for ECS Exec sessions (for example /bin/bash)")
 	rootCmd.Flags().IntVarP(&keepalive, "keepalive", "k", 15, "WebSocket keepalive interval in seconds")
 	rootCmd.Version = version
 

@@ -149,7 +149,10 @@ func newLoginCredentialsProvider(cfg aws.Config, session string) (aws.Credential
 }
 
 func loadSharedProfileSettings(profile string) (sharedProfileSettings, error) {
-	configPath := awsconfig.DefaultSharedConfigFilename()
+	configPath := os.Getenv("AWS_CONFIG_FILE")
+	if configPath == "" {
+		configPath = awsconfig.DefaultSharedConfigFilename()
+	}
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {

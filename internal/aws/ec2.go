@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -43,7 +44,37 @@ func ListRunningInstances(ctx context.Context, cfg aws.Config) ([]Instance, erro
 			}
 		}
 	}
+
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].InstanceID < instances[j].InstanceID
+	})
+
 	return instances, nil
+}
+
+func ListSessionTargets(ctx context.Context, cfg aws.Config) ([]SessionTarget, error) {
+	instances, err := ListRunningInstances(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]SessionTarget, 0, len(instances))
+	for _, inst := range instances {
+		targets = append(targets, SessionTarget{
+			Kind:      SessionTargetKindEC2,
+			TargetID:  inst.InstanceID,
+			Name:      inst.Name,
+			PrivateIP: inst.PrivateIP,
+		})
+	}
+
+	ecsTargets, err := ListExecTargets(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	targets = append(targets, ecsTargets...)
+	return targets, nil
 }
 
 func extractNameTag(tags []types.Tag) string {

@@ -25,28 +25,38 @@ func runSession(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	var instanceID string
+	var selectedTarget internalaws.SessionTarget
 	if target != "" {
-		instanceID = target
-	} else {
-		instances, err := internalaws.ListRunningInstances(ctx, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to list instances: %w", err)
+		selectedTarget = internalaws.SessionTarget{
+			Kind:     internalaws.SessionTargetKindEC2,
+			TargetID: target,
 		}
-		if len(instances) == 0 {
-			return fmt.Errorf("no running instances found")
+	} else {
+		targets, err := internalaws.ListSessionTargets(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to list targets: %w", err)
+		}
+		if len(targets) == 0 {
+			return fmt.Errorf("no runnable EC2 instances or ECS exec targets found")
 		}
 
-		selected, err := ui.SelectInstance(instances)
+		selected, err := ui.SelectSessionTarget(targets)
 		if err != nil {
-			return fmt.Errorf("instance selection cancelled: %w", err)
+			return fmt.Errorf("target selection cancelled: %w", err)
 		}
-		instanceID = selected.InstanceID
+		selectedTarget = *selected
 	}
 
-	fmt.Printf("Starting session to %s (keepalive: %ds)...\n", instanceID, keepalive)
+	if command != "" {
+		if selectedTarget.Kind != internalaws.SessionTargetKindECS {
+			return fmt.Errorf("--command is only supported for ECS targets")
+		}
+		selectedTarget.Command = command
+	}
 
-	return session.Start(ctx, cfg, instanceID, time.Duration(keepalive)*time.Second)
+	fmt.Printf("Starting session to %s (keepalive: %ds)...\n", selectedTarget.PrimaryLabel(), keepalive)
+
+	return session.Start(ctx, cfg, selectedTarget, time.Duration(keepalive)*time.Second)
 }
 
 func resolveProfile() string {

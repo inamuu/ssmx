@@ -9,14 +9,23 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	internalaws "github.com/inamuu/ssmx/internal/aws"
 	"github.com/mmmorris1975/ssm-session-client/datachannel"
 )
 
-func Start(ctx context.Context, cfg aws.Config, instanceID string, keepalive time.Duration) error {
+func Start(ctx context.Context, cfg aws.Config, target internalaws.SessionTarget, keepalive time.Duration) error {
+	if target.Kind == internalaws.SessionTargetKindECS {
+		if err := startECSPluginSession(ctx, cfg, target); err != nil {
+			return fmt.Errorf("failed to start session (%s): %w", target.ErrorLabel(), err)
+		}
+		return nil
+	}
+
 	c := new(datachannel.SsmDataChannel)
-	if err := c.Open(cfg, &ssm.StartSessionInput{Target: aws.String(instanceID)}); err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
+	if err := openSession(ctx, c, cfg, target); err != nil {
+		return fmt.Errorf("failed to start session (%s): %w", target.ErrorLabel(), err)
 	}
 	defer c.Close()
 
@@ -48,6 +57,28 @@ func Start(ctx context.Context, cfg aws.Config, instanceID string, keepalive tim
 	close(errCh)
 
 	return <-errCh
+}
+
+func openSession(ctx context.Context, c *datachannel.SsmDataChannel, cfg aws.Config, target internalaws.SessionTarget) error {
+	switch target.Kind {
+	case internalaws.SessionTargetKindECS:
+		output, err := ecs.NewFromConfig(cfg).ExecuteCommand(ctx, &ecs.ExecuteCommandInput{
+			Cluster:     aws.String(target.ClusterName),
+			Task:        aws.String(target.TaskArn),
+			Container:   aws.String(target.ContainerName),
+			Command:     aws.String(target.Command),
+			Interactive: true,
+		})
+		if err != nil {
+			return err
+		}
+		if output.Session == nil || output.Session.StreamUrl == nil || output.Session.TokenValue == nil {
+			return errors.New("execute-command response missing session details")
+		}
+		return c.StartSessionFromDataChannelURL(aws.ToString(output.Session.StreamUrl), aws.ToString(output.Session.TokenValue))
+	default:
+		return c.Open(cfg, &ssm.StartSessionInput{Target: aws.String(target.TargetID)})
+	}
 }
 
 // runKeepalive periodically sends a terminal size update to keep the WebSocket alive.
