@@ -33,6 +33,7 @@ func init() {
 	rootCmd.Version = version
 
 	rootCmd.AddCommand(newRunCommand())
+	rootCmd.AddCommand(newCopyCommand())
 }
 
 func Execute() {

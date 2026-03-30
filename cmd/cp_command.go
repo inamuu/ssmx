@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -17,36 +16,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type remoteRunFlags struct {
+type remoteCopyFlags struct {
 	target       string
-	command      string
-	script       string
 	documentName string
 	timeout      time.Duration
 	workDir      string
 }
 
-type remoteRunSpec struct {
+type remoteCopySpec struct {
 	commands    []string
 	displayName string
+	remotePath  string
 }
 
-func newRunCommand() *cobra.Command {
-	flags := &remoteRunFlags{}
+func newCopyCommand() *cobra.Command {
+	flags := &remoteCopyFlags{}
 
 	cmd := &cobra.Command{
-		Use:   "run",
-		Short: "Run an SSM Run Command or local script on an instance",
-		Long:  "Run a shell command or upload and execute a local script on an SSM-managed EC2 instance.",
+		Use:   "cp <local-path> [remote-path]",
+		Short: "Upload a local file to an SSM-managed instance",
+		Long:  "Upload a local file to an SSM-managed EC2 instance via AWS Run Command without executing it.",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRemoteCommand(cmd, args, flags)
+			return copyRemoteFile(cmd, args, flags)
 		},
 	}
 
 	cmd.Flags().StringVarP(&flags.target, "target", "t", "", "Instance ID (skip interactive selection)")
 	cmd.Flags().StringVar(&flags.target, "instance", "", "Alias of --target")
-	cmd.Flags().StringVarP(&flags.command, "command", "c", "", "Shell command to run on the instance")
-	cmd.Flags().StringVarP(&flags.script, "script", "s", "", "Local script file to upload and run on the instance")
 	cmd.Flags().StringVarP(&flags.documentName, "document", "d", "AWS-RunShellScript", "SSM document name")
 	cmd.Flags().DurationVar(&flags.timeout, "timeout", 10*time.Minute, "Overall timeout")
 	cmd.Flags().StringVarP(&flags.workDir, "workdir", "w", "", "Remote working directory")
@@ -55,7 +52,7 @@ func newRunCommand() *cobra.Command {
 	return cmd
 }
 
-func runRemoteCommand(cmd *cobra.Command, args []string, flags *remoteRunFlags) error {
+func copyRemoteFile(cmd *cobra.Command, args []string, flags *remoteCopyFlags) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -65,7 +62,7 @@ func runRemoteCommand(cmd *cobra.Command, args []string, flags *remoteRunFlags) 
 		defer timeoutCancel()
 	}
 
-	spec, err := buildRemoteRunSpec(flags.command, flags.script, args)
+	spec, err := buildRemoteCopySpec(args[0], args[1:])
 	if err != nil {
 		return err
 	}
@@ -104,6 +101,7 @@ func runRemoteCommand(cmd *cobra.Command, args []string, flags *remoteRunFlags) 
 
 	fmt.Fprintf(os.Stderr, "instance: %s\n", instanceID)
 	fmt.Fprintf(os.Stderr, "source: %s\n", spec.displayName)
+	fmt.Fprintf(os.Stderr, "destination: %s\n", spec.remotePath)
 	fmt.Fprintf(os.Stderr, "status: %s\n", aws.ToString(invocation.StatusDetails))
 
 	if out := strings.TrimRight(aws.ToString(invocation.StandardOutputContent), "\n"); out != "" {
@@ -114,72 +112,29 @@ func runRemoteCommand(cmd *cobra.Command, args []string, flags *remoteRunFlags) 
 	}
 
 	if invocation.Status != ssmtypes.CommandInvocationStatusSuccess {
-		return fmt.Errorf("remote command finished with status %s", aws.ToString(invocation.StatusDetails))
+		return fmt.Errorf("remote copy finished with status %s", aws.ToString(invocation.StatusDetails))
 	}
 
 	return nil
 }
 
-func buildRemoteRunSpec(command, script string, args []string) (remoteRunSpec, error) {
-	if (command == "") == (script == "") {
-		return remoteRunSpec{}, fmt.Errorf("specify exactly one of --command or --script")
-	}
-
-	if command != "" {
-		if info, err := os.Stat(command); err == nil && !info.IsDir() {
-			script = command
-			command = ""
-		}
-	}
-
-	if command != "" {
-		fullCommand := command
-		for _, arg := range args {
-			fullCommand += " " + shellQuote(arg)
-		}
-		return remoteRunSpec{
-			commands:    []string{fullCommand},
-			displayName: "inline command",
-		}, nil
-	}
-
-	content, err := os.ReadFile(script)
+func buildRemoteCopySpec(localPath string, args []string) (remoteCopySpec, error) {
+	content, err := os.ReadFile(localPath)
 	if err != nil {
-		return remoteRunSpec{}, fmt.Errorf("read script: %w", err)
+		return remoteCopySpec{}, fmt.Errorf("read local file: %w", err)
 	}
 
-	remotePath := defaultRemoteScriptPath(script)
+	remotePath := defaultRemoteScriptPath(localPath)
+	if len(args) > 0 && args[0] != "" {
+		remotePath = args[0]
+	}
+
 	var b strings.Builder
 	writeRemoteUploadCommand(&b, remotePath, content)
-	fmt.Fprintf(&b, "chmod +x %s\n", shellQuote(remotePath))
-	fmt.Fprintf(&b, "%s", shellQuote(remotePath))
-	for _, arg := range args {
-		fmt.Fprintf(&b, " %s", shellQuote(arg))
-	}
-	b.WriteByte('\n')
 
-	return remoteRunSpec{
+	return remoteCopySpec{
 		commands:    []string{b.String()},
-		displayName: script,
+		displayName: localPath,
+		remotePath:  remotePath,
 	}, nil
-}
-
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
-func defaultRemoteScriptPath(script string) string {
-	return "/tmp/" + filepath.Base(script)
-}
-
-func writeRemoteUploadCommand(b *strings.Builder, remotePath string, content []byte) {
-	fmt.Fprintf(b, "cat <<'__SSMX_REMOTE_SCRIPT__' > %s\n", shellQuote(remotePath))
-	b.Write(content)
-	if len(content) == 0 || content[len(content)-1] != '\n' {
-		b.WriteByte('\n')
-	}
-	b.WriteString("__SSMX_REMOTE_SCRIPT__\n")
 }

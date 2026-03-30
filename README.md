@@ -15,6 +15,7 @@ AWS の `session-manager-plugin` は WebSocket の keepalive 間隔が **5分に
 - `session-manager-plugin` 不要
 - SSM Run Command によるインラインコマンド実行
 - ローカルスクリプトを転送してリモート実行
+- ローカルファイルを転送のみしてリモート配置
 
 ## Install
 
@@ -57,6 +58,10 @@ ssmx run --command 'uname -a'
 
 # ローカルスクリプトを転送して実行
 ssmx run --script ./scripts/deploy.sh -- --dry-run
+
+# ローカルファイルを転送のみ
+ssmx cp ./scripts/deploy.sh
+ssmx cp ./scripts/deploy.sh /var/tmp/deploy.sh
 ```
 
 ## Flags
@@ -80,6 +85,17 @@ ssmx run --script ./scripts/deploy.sh -- --dry-run
 ```
 
 `--command` にローカル実在ファイルを渡した場合は、`ssm-local-script` と同様にローカルスクリプトとして扱います。
+
+## `cp` サブコマンド
+
+`ssmx cp` は、SSM 管理下かつ Online な EC2 にローカルファイルを転送します。転送後に実行はしません。
+保存先を省略した場合は、既存の `run --script` と同じく `/tmp/<basename>` に配置します。
+
+```bash
+ssmx cp ./scripts/deploy.sh
+ssmx cp ./scripts/deploy.sh /var/tmp/deploy.sh
+ssmx cp --target i-0123456789abcdef0 ./config/app.env /etc/myapp/app.env
+```
 
 ## License
 
