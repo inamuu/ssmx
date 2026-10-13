@@ -7,7 +7,8 @@
 #
 #   scripts/release.sh --local
 #       test -> build -> replace the ssmx binary found in PATH
-#       (old binary is moved to ~/.Trash). Set SSMX_INSTALL_PATH to override.
+#       (old binary goes to ~/.Trash; $(go env GOPATH)/bin if not in PATH).
+#       Set SSMX_INSTALL_PATH to override.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,7 +17,7 @@ FORMULA="inamuu/tap/ssmx"
 WORKFLOW="release.yml"
 
 usage() {
-  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -54,11 +55,13 @@ install_local() {
   if [ -z "$dest" ]; then
     dest=$(command -v ssmx || true)
     if [ -z "$dest" ]; then
-      echo "ssmx not found in PATH. Set SSMX_INSTALL_PATH." >&2
-      exit 1
+      dest="$(go env GOPATH)/bin/ssmx"
+      mkdir -p "$(dirname "$dest")"
+      echo "ssmx not found in PATH. install to ${dest}"
+    else
+      # Follow symlinks (e.g. Homebrew's bin -> Cellar).
+      dest=$(realpath "$dest")
     fi
-    # Follow symlinks (e.g. Homebrew's bin -> Cellar).
-    dest=$(realpath "$dest")
   fi
 
   version="$(git describe --tags --always --dirty)-local"
