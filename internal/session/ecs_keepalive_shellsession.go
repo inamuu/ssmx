@@ -30,6 +30,7 @@ type ecsKeepaliveShellSession struct {
 	sizeData          message.SizeData
 	lastSizeSentAt    time.Time
 	originalSttyState bytes.Buffer
+	upload            *ecsUpload
 }
 
 func init() {
@@ -42,6 +43,7 @@ func (ecsKeepaliveShellSession) Name() string {
 
 func (s *ecsKeepaliveShellSession) Initialize(logger log.T, sessionVar *pluginsession.Session) {
 	s.Session = *sessionVar
+	s.upload = activeUpload
 	s.DataChannel.RegisterOutputStreamHandler(s.ProcessStreamMessagePayload, true)
 	s.DataChannel.GetWsChannel().SetOnMessage(func(input []byte) {
 		s.DataChannel.OutputMessageHandler(logger, s.Stop, s.SessionId, input)
@@ -49,17 +51,28 @@ func (s *ecsKeepaliveShellSession) Initialize(logger log.T, sessionVar *pluginse
 }
 
 func (s *ecsKeepaliveShellSession) SetSessionHandlers(logger log.T) error {
+	if s.upload != nil {
+		return s.upload.run(logger, s.DataChannel)
+	}
 	s.handleTerminalResize(logger)
 	s.handleControlSignals(logger)
 	return s.handleKeyboardInput(logger)
 }
 
 func (s *ecsKeepaliveShellSession) ProcessStreamMessagePayload(logger log.T, outputMessage message.ClientMessage) (bool, error) {
+	if s.upload != nil {
+		s.upload.appendOutput(outputMessage.Payload)
+		return true, nil
+	}
 	s.DisplayMode.DisplayMessage(logger, outputMessage)
 	return true, nil
 }
 
 func (s *ecsKeepaliveShellSession) Stop() {
+	if s.upload != nil {
+		s.upload.finish()
+		return
+	}
 	_ = setSttyState(&s.originalSttyState)
 	_ = setSttyState(bytes.NewBufferString("echo"))
 	os.Exit(0)

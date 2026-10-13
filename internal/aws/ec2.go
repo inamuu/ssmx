@@ -52,28 +52,44 @@ func ListRunningInstances(ctx context.Context, cfg aws.Config) ([]Instance, erro
 	return instances, nil
 }
 
-func ListSessionTargets(ctx context.Context, cfg aws.Config) ([]SessionTarget, error) {
-	instances, err := ListRunningInstances(ctx, cfg)
-	if err != nil {
-		return nil, err
+// ListSessionTargets returns running EC2 instances and ECS exec targets.
+// kind limits the result to one kind; an empty kind returns both.
+func ListSessionTargets(ctx context.Context, cfg aws.Config, kind SessionTargetKind) ([]SessionTarget, error) {
+	return listTargets(ctx, cfg, kind, ListRunningInstances)
+}
+
+// ListCopyTargets returns SSM-managed (Online) EC2 instances and ECS exec
+// targets, i.e. targets that can receive a file without an interactive shell.
+func ListCopyTargets(ctx context.Context, cfg aws.Config, kind SessionTargetKind) ([]SessionTarget, error) {
+	return listTargets(ctx, cfg, kind, ListManagedInstances)
+}
+
+func listTargets(ctx context.Context, cfg aws.Config, kind SessionTargetKind, listInstances func(context.Context, aws.Config) ([]Instance, error)) ([]SessionTarget, error) {
+	var targets []SessionTarget
+
+	if kind == "" || kind == SessionTargetKindEC2 {
+		instances, err := listInstances(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		for _, inst := range instances {
+			targets = append(targets, SessionTarget{
+				Kind:      SessionTargetKindEC2,
+				TargetID:  inst.InstanceID,
+				Name:      inst.Name,
+				PrivateIP: inst.PrivateIP,
+			})
+		}
 	}
 
-	targets := make([]SessionTarget, 0, len(instances))
-	for _, inst := range instances {
-		targets = append(targets, SessionTarget{
-			Kind:      SessionTargetKindEC2,
-			TargetID:  inst.InstanceID,
-			Name:      inst.Name,
-			PrivateIP: inst.PrivateIP,
-		})
+	if kind == "" || kind == SessionTargetKindECS {
+		ecsTargets, err := ListExecTargets(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, ecsTargets...)
 	}
 
-	ecsTargets, err := ListExecTargets(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	targets = append(targets, ecsTargets...)
 	return targets, nil
 }
 
