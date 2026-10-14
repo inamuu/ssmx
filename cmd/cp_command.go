@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -82,12 +83,13 @@ func copyRemoteFile(cmd *cobra.Command, args []string, flags *remoteCopyFlags) e
 	}
 
 	if selected.Kind == internalaws.SessionTargetKindECS {
-		if err := session.UploadToECS(ctx, cfg, selected, spec.remotePath, flags.workDir, spec.content); err != nil {
+		written, err := session.UploadToECS(ctx, cfg, selected, spec.remotePath, flags.workDir, filepath.Base(spec.displayName), spec.content)
+		if err != nil {
 			return fmt.Errorf("remote copy to %s failed: %w", selected.ErrorLabel(), err)
 		}
 		fmt.Fprintf(os.Stderr, "container: %s\n", selected.PrimaryLabel())
 		fmt.Fprintf(os.Stderr, "source: %s\n", spec.displayName)
-		fmt.Fprintf(os.Stderr, "destination: %s\n", spec.remotePath)
+		fmt.Fprintf(os.Stderr, "destination: %s\n", written)
 		fmt.Fprintf(os.Stderr, "status: Success\n")
 		return nil
 	}
@@ -133,8 +135,12 @@ func buildRemoteCopySpec(localPath string, args []string) (remoteCopySpec, error
 		remotePath = args[0]
 	}
 
+	// Like cp, a directory destination means <dir>/<basename>.
 	var b strings.Builder
-	writeRemoteUploadCommand(&b, remotePath, content)
+	fmt.Fprintf(&b, "p=%s\n", shellQuote(remotePath))
+	fmt.Fprintf(&b, "if [ -d \"$p\" ]; then p=\"${p%%/}\"/%s; fi\n", shellQuote(filepath.Base(localPath)))
+	fmt.Fprintf(&b, "cat <<'__SSMX_REMOTE_SCRIPT__' > \"$p\"\n")
+	writeHeredocBody(&b, content)
 
 	return remoteCopySpec{
 		commands:    []string{b.String()},

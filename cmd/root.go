@@ -23,6 +23,9 @@ var rootCmd = &cobra.Command{
 	Short: "AWS SSM Session Manager with configurable keepalive",
 	Long:  "ssmx - AWS SSM Session Manager CLI with configurable WebSocket keepalive interval",
 	RunE:  runSession,
+	// Errors are printed once by Execute; don't dump usage on runtime errors.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func init() {

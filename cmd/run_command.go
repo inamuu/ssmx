@@ -177,6 +177,10 @@ func defaultRemoteScriptPath(script string) string {
 
 func writeRemoteUploadCommand(b *strings.Builder, remotePath string, content []byte) {
 	fmt.Fprintf(b, "cat <<'__SSMX_REMOTE_SCRIPT__' > %s\n", shellQuote(remotePath))
+	writeHeredocBody(b, content)
+}
+
+func writeHeredocBody(b *strings.Builder, content []byte) {
 	b.Write(content)
 	if len(content) == 0 || content[len(content)-1] != '\n' {
 		b.WriteByte('\n')

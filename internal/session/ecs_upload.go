@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -33,15 +34,23 @@ const (
 	uploadLinesPerPacket = 16
 )
 
-// uploadScript runs inside the container. It turns off tty echo, tells the
-// client it is ready, then decodes base64 from stdin into $1 until EOF.
-const uploadScript = `p="$1"; ` +
-	`if [ -n "$2" ]; then cd "$2" || { echo ` + uploadErrMarker + ` cannot cd to "$2"; exit 1; }; fi; ` +
-	`command -v base64 >/dev/null 2>&1 || { echo ` + uploadErrMarker + ` base64 command not found in container; exit 1; }; ` +
+// uploadScript runs inside the container. It waits for a go-ahead line from
+// the client (so no output is sent before the client can receive it), turns
+// off tty echo, reports ready, then decodes base64 from stdin until EOF.
+// $1: destination, $2: working directory, $3: basename used when $1 is a
+// directory.
+const uploadScript = `fail() { echo ` + uploadErrMarker + ` "$@"; sleep 1; exit 1; }; ` +
+	`read _go; ` +
 	`stty -echo 2>/dev/null; ` +
+	`p="$1"; ` +
+	`if [ -n "$2" ]; then cd "$2" || fail cannot cd to "$2"; fi; ` +
+	`command -v base64 >/dev/null 2>&1 || fail base64 command not found in container; ` +
+	`if [ -d "$p" ]; then p="${p%/}/$3"; fi; ` +
+	`: > "$p" 2>/dev/null || fail cannot write "$p"; ` +
 	`echo ` + uploadReadyMarker + `; ` +
-	`base64 -d > "$p" || { echo ` + uploadErrMarker + ` failed to write "$p"; exit 1; }; ` +
-	`echo ` + uploadDoneMarker + ` $(wc -c < "$p")`
+	`base64 -d > "$p" || fail failed to decode into "$p"; ` +
+	`echo ` + uploadDoneMarker + ` $(wc -c < "$p") "$p"; ` +
+	`sleep 1`
 
 // activeUpload switches the registered ECS shell session into upload mode.
 // The session plugin registry is global, so this is set only while
@@ -49,14 +58,15 @@ const uploadScript = `p="$1"; ` +
 var activeUpload *ecsUpload
 
 // UploadToECS writes content to remotePath inside an ECS container through
-// ECS Exec. The file is streamed as base64 over the session's stdin, so the
-// container needs /bin/sh and base64.
-func UploadToECS(ctx context.Context, cfg aws.Config, target internalaws.SessionTarget, remotePath, workDir string, content []byte) error {
-	if strings.Contains(remotePath, "'") || strings.Contains(workDir, "'") {
-		return errors.New("remote path and workdir must not contain single quotes")
+// ECS Exec and returns the path actually written (remotePath/baseName when
+// remotePath is a directory). The file is streamed as base64 over the
+// session's stdin, so the container needs /bin/sh and base64.
+func UploadToECS(ctx context.Context, cfg aws.Config, target internalaws.SessionTarget, remotePath, workDir, baseName string, content []byte) (string, error) {
+	if strings.ContainsRune(remotePath+workDir+baseName, '\'') {
+		return "", errors.New("remote path, workdir and file name must not contain single quotes")
 	}
 
-	command := fmt.Sprintf("/bin/sh -c '%s' ssmx '%s' '%s'", uploadScript, remotePath, workDir)
+	command := fmt.Sprintf("/bin/sh -c '%s' ssmx '%s' '%s' '%s'", uploadScript, remotePath, workDir, baseName)
 	output, err := ecs.NewFromConfig(cfg).ExecuteCommand(ctx, &ecs.ExecuteCommandInput{
 		Cluster:     aws.String(target.ClusterName),
 		Task:        aws.String(target.TaskArn),
@@ -65,10 +75,10 @@ func UploadToECS(ctx context.Context, cfg aws.Config, target internalaws.Session
 		Interactive: true,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if output.Session == nil || output.Session.SessionId == nil || output.Session.StreamUrl == nil || output.Session.TokenValue == nil {
-		return errors.New("execute-command response missing session details")
+		return "", errors.New("execute-command response missing session details")
 	}
 
 	u := &ecsUpload{ctx: ctx, content: content, ready: make(chan struct{}), done: make(chan struct{})}
@@ -85,52 +95,82 @@ func UploadToECS(ctx context.Context, cfg aws.Config, target internalaws.Session
 		DataChannel: &plugindatachannel.DataChannel{},
 	}
 
-	// The plugin prints session start/exit banners to stdout; keep them out
-	// of the cp output.
-	if devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
-		stdout := os.Stdout
-		os.Stdout = devNull
-		defer func() {
-			os.Stdout = stdout
-			devNull.Close()
-		}()
-	}
-
+	// The plugin prints session start/exit banners (and the agent's reason
+	// when the session ends abnormally) to stdout. Capture them instead of
+	// mixing them into the cp output; they are shown only on failure.
+	restore := captureStdout()
 	logger := log.Logger(false, s.ClientId)
 	execErr := s.Execute(logger)
 	if s.DataChannel != nil {
 		_ = s.DataChannel.Close(logger)
 	}
+	sessionLog := restore()
 	if execErr != nil {
-		return execErr
+		return "", execErr
 	}
 
-	return checkUploadOutput(u.outputString(), len(content))
+	written, err := checkUploadOutput(u.outputString(), len(content))
+	if err != nil {
+		if msg := strings.TrimSpace(sessionLog); msg != "" {
+			return "", fmt.Errorf("%w\nsession log:\n%s", err, msg)
+		}
+		return "", err
+	}
+	return written, nil
 }
 
-func checkUploadOutput(out string, wantSize int) error {
+// captureStdout redirects os.Stdout to a pipe. The returned function restores
+// it and returns what was written.
+func captureStdout() func() string {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return func() string { return "" }
+	}
+
+	stdout := os.Stdout
+	os.Stdout = w
+
+	var buf bytes.Buffer
+	copied := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(copied)
+	}()
+
+	return func() string {
+		os.Stdout = stdout
+		w.Close()
+		<-copied
+		r.Close()
+		return buf.String()
+	}
+}
+
+// checkUploadOutput parses the container output and returns the written path.
+func checkUploadOutput(out string, wantSize int) (string, error) {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if msg, ok := strings.CutPrefix(line, uploadErrMarker); ok {
-			return errors.New(strings.TrimSpace(msg))
+			return "", errors.New(strings.TrimSpace(msg))
 		}
-		if size, ok := strings.CutPrefix(line, uploadDoneMarker); ok {
-			got, err := strconv.Atoi(strings.TrimSpace(size))
+		if rest, ok := strings.CutPrefix(line, uploadDoneMarker); ok {
+			size, path, _ := strings.Cut(strings.TrimSpace(rest), " ")
+			got, err := strconv.Atoi(size)
 			if err != nil {
-				return fmt.Errorf("unexpected size output %q", line)
+				return "", fmt.Errorf("unexpected size output %q", line)
 			}
 			if got != wantSize {
-				return fmt.Errorf("size mismatch: wrote %d bytes, want %d", got, wantSize)
+				return "", fmt.Errorf("size mismatch: wrote %d bytes, want %d", got, wantSize)
 			}
-			return nil
+			return strings.TrimSpace(path), nil
 		}
 	}
 
 	out = strings.TrimSpace(out)
 	if out == "" {
-		return errors.New("upload did not complete (no output from container)")
+		return "", errors.New("upload did not complete (no output from container)")
 	}
-	return fmt.Errorf("upload did not complete: %s", out)
+	return "", fmt.Errorf("upload did not complete: %s", out)
 }
 
 type ecsUpload struct {
@@ -172,6 +212,11 @@ func (u *ecsUpload) run(logger log.T, dc plugindatachannel.IDataChannel) error {
 	sizeData, _ := json.Marshal(message.SizeData{Cols: 200, Rows: 50})
 	if err := dc.SendInputDataMessage(logger, message.Size, sizeData); err != nil {
 		return fmt.Errorf("send terminal size: %w", err)
+	}
+
+	// Let the remote script start; it waits for this line before printing.
+	if err := dc.SendInputDataMessage(logger, message.Output, []byte("\n")); err != nil {
+		return fmt.Errorf("send start signal: %w", err)
 	}
 
 	select {
