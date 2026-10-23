@@ -7,7 +7,6 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	internalaws "github.com/inamuu/ssmx/internal/aws"
-	"github.com/ktr0731/go-fuzzyfinder/matching"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -152,18 +151,24 @@ type selector struct {
 
 func (s *selector) filter() {
 	s.matched = s.matched[:0]
-	q := strings.TrimSpace(string(s.query))
-	if q == "" {
-		for i := range s.labels {
+	terms := strings.Fields(strings.ToLower(string(s.query)))
+	for i, label := range s.labels {
+		if matchAll(strings.ToLower(label), terms) {
 			s.matched = append(s.matched, i)
-		}
-	} else {
-		for _, m := range matching.FindAll(q, s.labels) {
-			s.matched = append(s.matched, m.Idx)
 		}
 	}
 	s.cursor = 0
 	s.offset = 0
+}
+
+// matchAll reports whether label contains every term as a substring.
+func matchAll(label string, terms []string) bool {
+	for _, t := range terms {
+		if !strings.Contains(label, t) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *selector) move(delta int) {

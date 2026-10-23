@@ -14,7 +14,6 @@ require (
 	github.com/aws/session-manager-plugin v0.0.0-20260212212525-20354200d14d
 	github.com/gdamore/tcell/v2 v2.6.0
 	github.com/google/uuid v1.6.0
-	github.com/ktr0731/go-fuzzyfinder v0.9.0
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mmmorris1975/ssm-session-client v0.404.0
 	github.com/spf13/cobra v1.10.2

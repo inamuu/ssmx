@@ -77,3 +77,32 @@ func waitFor(t *testing.T, sim tcell.SimulationScreen, ok func(string) bool) {
 }
 
 func timeSleep() { time.Sleep(10 * time.Millisecond) }
+
+func TestSelectorFilter_AndSubstring(t *testing.T) {
+	s := &selector{labels: []string{
+		"[EC2] stg-example-mail",
+		"[EC2] stg-example-web",
+		"[EC2] prd-example-mail",
+		"[EC2] stg-other-api",
+	}}
+	cases := map[string][]int{
+		"":              {0, 1, 2, 3},
+		"stg mail":      {0},
+		"example mail":  {0, 2},
+		"STG  example ": {0, 1},
+		"sam":           {},
+		"mail stg":      {0},
+	}
+	for q, want := range cases {
+		s.query = []rune(q)
+		s.filter()
+		if len(s.matched) != len(want) {
+			t.Fatalf("query %q: got %v, want %v", q, s.matched, want)
+		}
+		for i := range want {
+			if s.matched[i] != want[i] {
+				t.Fatalf("query %q: got %v, want %v", q, s.matched, want)
+			}
+		}
+	}
+}
