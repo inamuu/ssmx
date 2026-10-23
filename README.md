@@ -114,7 +114,12 @@ ssmx cp -t ecs:my-cluster/0123456789abcdef/app ./scripts/debug.sh /tmp/debug.sh
 
 ## リリース
 
+main ブランチで変更をコミットし、作業ツリーがクリーンな状態で実行します（途中で `y/N` の確認があります）。
+
 ```bash
+git add -A
+git commit -m "..."
+
 # テスト -> タグ作成・push -> GitHub Actions の完了待ち -> brew upgrade
 scripts/release.sh patch      # minor / major / v0.2.0 も可
 
